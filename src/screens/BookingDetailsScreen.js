@@ -50,7 +50,7 @@ export default function BookingDetailsScreen({ navigation }) {
     via: 'SNCR-TUH',
     distance: '37 km',
     passengers: '1 Adult, 0 Child',
-    ticketType: 'JOURNEY',
+    ticketType: 'RETURN',
     trainType: 'AC-EMU',
     classType: 'FIRST',
     fare: '210.00',

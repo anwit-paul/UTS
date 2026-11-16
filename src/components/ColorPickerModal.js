@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   ScrollView,
@@ -8,11 +10,13 @@ import {
   View,
 } from 'react-native';
 
+const MOST_USED_STORAGE_KEY = '@uts/most-used-colors';
+const MAX_MOST_USED_COLORS = 8;
+
 export const PALETTE_COLORS = [
   // Distinct Warm Oranges & Ambers
   '#F39C12', // IRCTC Orange (Default)
   '#EA580C', // Deep Orange
-  '#FB923C', // Soft Orange
 
   // Distinct Reds & Pinks
   '#EF4444', // Bright Red
@@ -72,6 +76,114 @@ export const PALETTE_COLORS = [
 ];
 
 export default function ColorPickerModal({ visible, selectedColor, onSelectColor, onClose }) {
+  const [usageCounts, setUsageCounts] = useState({});
+  const [isEditingMostUsed, setIsEditingMostUsed] = useState(false);
+  const [colorsToDelete, setColorsToDelete] = useState([]);
+  const usageCountsRef = useRef({});
+  const loadPromiseRef = useRef(Promise.resolve({}));
+  const writeQueueRef = useRef(Promise.resolve());
+
+  useEffect(() => {
+    if (!visible) {
+      setIsEditingMostUsed(false);
+      setColorsToDelete([]);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadPromise = AsyncStorage.getItem(MOST_USED_STORAGE_KEY)
+      .then((storedCounts) => {
+        if (storedCounts === null) {
+          return {};
+        }
+
+        const parsedCounts = JSON.parse(storedCounts);
+        if (!parsedCounts || typeof parsedCounts !== 'object' || Array.isArray(parsedCounts)) {
+          throw new Error('Stored most-used colors must be an object.');
+        }
+
+        return Object.fromEntries(
+          Object.entries(parsedCounts).filter(
+            ([color, count]) => PALETTE_COLORS.includes(color) && Number.isSafeInteger(count) && count > 0
+          )
+        );
+      })
+      .catch((error) => {
+        console.error('Failed to load most-used colors.', error);
+        return {};
+      });
+
+    loadPromiseRef.current = loadPromise;
+    loadPromise.then((storedCounts) => {
+      usageCountsRef.current = storedCounts;
+      if (isMounted) {
+        setUsageCounts(storedCounts);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const updateUsageCounts = async (color) => {
+    await loadPromiseRef.current;
+    const nextCounts = { ...usageCountsRef.current };
+    nextCounts[color] = (nextCounts[color] || 0) + 1;
+
+    usageCountsRef.current = nextCounts;
+    setUsageCounts(nextCounts);
+
+    await persistUsageCounts(nextCounts);
+  };
+
+  const persistUsageCounts = (nextCounts) => {
+    const writePromise = writeQueueRef.current
+      .then(() => AsyncStorage.setItem(MOST_USED_STORAGE_KEY, JSON.stringify(nextCounts)))
+      .then(() => true)
+      .catch((error) => {
+        console.error('Failed to save most-used colors.', error);
+        return false;
+      });
+    writeQueueRef.current = writePromise;
+    return writePromise;
+  };
+
+  const mostUsedColors = Object.entries(usageCounts)
+    .sort(
+      ([colorA, countA], [colorB, countB]) =>
+        countB - countA || PALETTE_COLORS.indexOf(colorA) - PALETTE_COLORS.indexOf(colorB)
+    )
+    .slice(0, MAX_MOST_USED_COLORS)
+    .map(([color]) => color);
+
+  const selectColor = (color) => {
+    void updateUsageCounts(color);
+    onSelectColor(color);
+    onClose();
+  };
+
+  const toggleColorForDeletion = (color) => {
+    setColorsToDelete((colors) =>
+      colors.includes(color) ? colors.filter((item) => item !== color) : [...colors, color]
+    );
+  };
+
+  const saveMostUsedColors = async () => {
+    const nextCounts = { ...usageCountsRef.current };
+    colorsToDelete.forEach((color) => {
+      delete nextCounts[color];
+    });
+
+    if (await persistUsageCounts(nextCounts)) {
+      usageCountsRef.current = nextCounts;
+      setUsageCounts(nextCounts);
+      setColorsToDelete([]);
+      setIsEditingMostUsed(false);
+    }
+  };
+
   return (
     <Modal
       visible={visible}
@@ -90,8 +202,80 @@ export default function ColorPickerModal({ visible, selectedColor, onSelectColor
               </View>
 
               <Text style={styles.subHint}>
-                Tap any color below to update all orange strips & accents
+                Tap a color to apply it. Use × to choose colors to remove, then ✓ to save.
               </Text>
+
+              <View style={styles.mostUsedSection}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Most used</Text>
+                  {mostUsedColors.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.editColorsButton}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        isEditingMostUsed ? 'Save most-used colors' : 'Choose most-used colors to delete'
+                      }
+                      onPress={() => {
+                        if (isEditingMostUsed) {
+                          void saveMostUsedColors();
+                        } else {
+                          setColorsToDelete([]);
+                          setIsEditingMostUsed(true);
+                        }
+                      }}>
+                      <Text style={styles.editColorsButtonText}>
+                        {isEditingMostUsed ? '✓' : '×'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {mostUsedColors.length === 0 ? (
+                  <Text style={styles.emptyMostUsed}>Your selected colors will appear here</Text>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.mostUsedRow}>
+                    {mostUsedColors.map((hex) => {
+                      const isSelected = selectedColor?.toUpperCase() === hex.toUpperCase();
+                      return (
+                        <TouchableOpacity
+                          key={hex}
+                          style={[
+                            styles.colorSwatch,
+                            { backgroundColor: hex },
+                            isSelected && styles.selectedSwatch,
+                            isEditingMostUsed && colorsToDelete.includes(hex) && styles.markedForDeletion,
+                          ]}
+                          activeOpacity={0.7}
+                          accessibilityLabel={`${hex}, most used color${
+                            colorsToDelete.includes(hex) ? ', marked for deletion' : ''
+                          }`}
+                          accessibilityHint={
+                            isEditingMostUsed
+                              ? 'Tap to mark or unmark this color for deletion'
+                              : 'Tap to apply this color'
+                          }
+                          onPress={() => {
+                            if (isEditingMostUsed) {
+                              toggleColorForDeletion(hex);
+                            } else {
+                              selectColor(hex);
+                            }
+                          }}>
+                          {isSelected && <View style={styles.checkMark} />}
+                          {isEditingMostUsed && colorsToDelete.includes(hex) && (
+                            <View style={styles.deleteMark}>
+                              <Text style={styles.deleteMarkText}>×</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </View>
 
               <ScrollView contentContainerStyle={styles.paletteGrid} showsVerticalScrollIndicator={false}>
                 {PALETTE_COLORS.map((hex) => {
@@ -105,10 +289,7 @@ export default function ColorPickerModal({ visible, selectedColor, onSelectColor
                         isSelected && styles.selectedSwatch,
                       ]}
                       activeOpacity={0.7}
-                      onPress={() => {
-                        onSelectColor(hex);
-                        onClose();
-                      }}>
+                      onPress={() => selectColor(hex)}>
                       {isSelected && <View style={styles.checkMark} />}
                     </TouchableOpacity>
                   );
@@ -167,7 +348,46 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     fontSize: 13,
     marginTop: 4,
-    marginBottom: 16,
+    marginBottom: 12,
+  },
+  mostUsedSection: {
+    marginBottom: 12,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  sectionTitle: {
+    color: '#D1D5DB',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  editColorsButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#374151',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editColorsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '600',
+    lineHeight: 24,
+  },
+  emptyMostUsed: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    paddingVertical: 8,
+  },
+  mostUsedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 2,
   },
   paletteGrid: {
     flexDirection: 'row',
@@ -177,6 +397,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   colorSwatch: {
+    position: 'relative',
     width: 29,
     height: 29,
     borderRadius: 8,
@@ -190,6 +411,26 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 3,
     elevation: 4,
+  },
+  markedForDeletion: {
+    opacity: 0.45,
+  },
+  deleteMark: {
+    position: 'absolute',
+    top: -7,
+    right: -7,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteMarkText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+    lineHeight: 14,
   },
   selectedSwatch: {
     borderColor: '#FFFFFF',

@@ -68,7 +68,7 @@ export default function TicketCard({
       {/* Via Pill Box */}
       {ticketData.via && (
         <View style={styles.viaPill}>
-          <Ionicons name="share-social-outline" size={16} color="#64748B" style={styles.viaIcon} />
+          <Ionicons name="share-social-outline" size={14} color="#64748B" style={styles.viaIcon} />
           <Text style={styles.viaPillText}>Via: {ticketData.via}</Text>
         </View>
       )}
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
   viaPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f1f5f8',
+    backgroundColor: '#FAfAfA',
     borderWidth: 1,
     borderColor: '#dee1e6',
     borderRadius: 10,
@@ -230,8 +230,8 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   viaPillText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '500',
     color: '#475569',
   },
   barcodeStringRow: {
